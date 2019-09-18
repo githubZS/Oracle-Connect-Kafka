@@ -33,13 +33,9 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
+import com.ecer.kafka.connect.oracle.models.Data;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -75,14 +71,18 @@ public class OracleSourceConnectorUtils{
     private final Map<String,Schema> tableSchema = new HashMap<>();
     private final Map<String,Schema> tableRecordSchema = new HashMap<>();
     private final Map<String,com.ecer.kafka.connect.oracle.models.Column> tabColsMap = new HashMap<>();
+    // key=owner.tableName, value=countValue
+    private final Map<String,ArrayList<String>> tabColsMapType = new HashMap<>();
     private final ConnectorSQL sql;
 
     OracleSourceConnectorConfig config;
     Connection dbConn;
     CallableStatement mineTables;
     CallableStatement mineTableCols;
+    CallableStatement hexToRawTableCols;
     ResultSet mineTableColsResultSet;
     ResultSet mineTablesResultSet;
+    ResultSet hexToRawTableColsResultSet;
 
     public OracleSourceConnectorUtils(Connection Conn,OracleSourceConnectorConfig Config, ConnectorSQL sql)throws SQLException {
     	this.sql = sql;
@@ -136,6 +136,10 @@ public class OracleSourceConnectorUtils{
     	  // TODO: consider throwing up here, or an NPE will be thrown in OracleSourceTask.poll()
           log.warn("mineTableCols has no results for {}.{}", owner, tableName);
       }
+
+      tabColsMapType.remove(owner+DOT+tableName);
+
+
       while(mineTableColsResultSet.next()){
         String columnName = mineTableColsResultSet.getString(COLUMN_NAME_FIELD);
         Boolean nullable = mineTableColsResultSet.getString(NULLABLE_FIELD).equals("Y") ? true:false;
@@ -201,19 +205,55 @@ public class OracleSourceConnectorUtils{
         }
         dataSchemaBuiler.field(columnName,columnSchema);
         com.ecer.kafka.connect.oracle.models.Column column = new com.ecer.kafka.connect.oracle.models.Column(owner, tableName, columnName, nullable, dataType, dataLength, dataScale, pkColumn, uqColumn,columnSchema);
+
         String keyTabCols = owner+DOT+tableName+DOT+columnName;
-        tabColsMap.put(keyTabCols, column); 
-        log.debug("tabColsMap entry added: {} = {}", keyTabCols, column.toString());
+        tabColsMap.put(keyTabCols, column);
+
+        String keyTab = owner+DOT+tableName;
+        ArrayList<String> tabColsType = tabColsMapType.get(keyTab);
+        if (tabColsType==null){
+            tabColsType = new ArrayList<>();
+            tabColsType.add(dataType);
+            tabColsMapType.put(keyTab, tabColsType);
+        }else {
+            tabColsType.add(dataType);
+        }
+
+        log.info("tabColsMap entry added: {} = {}", keyTabCols, column.toString());
       }
+
+      log.info("thisisbyzs:tabColsMapType=>", tabColsMapType);
+      for (String table :
+              tabColsMapType.keySet()) {
+          log.info("thisisbyzs:tablename="+table);
+          ArrayList<String> list = tabColsMapType.get(table);
+          for (String type :
+               list) {
+              log.info("thisisbyzs:type="+type);
+          }
+      }
+
       Schema tSchema = dataSchemaBuiler.optional().build();
       tableSchema.put(owner+DOT+tableName, tSchema);
       mineTableColsResultSet.close();
       mineTableCols.close();      
     }
 
-    
+    private class DdlState{
+        private boolean isChanged = false;
 
-    protected Map<String,LinkedHashMap<String,String>> parseSql(String owner,String tableName,String sqlRedo) throws JSQLParserException , SQLException{
+        public boolean isChanged() {
+            return isChanged;
+        }
+
+        public void setChanged(boolean changed) {
+            isChanged = changed;
+        }
+    }
+
+    protected Map<String,LinkedHashMap<String,String>> parseSql(String owner,String tableName,String sqlRedo,
+                DdlState ddlState)
+            throws JSQLParserException , SQLException{
 
       String sqlRedo2=sqlRedo.replace("IS NULL", "= NULL");
       Statement stmt = CCJSqlParserUtil.parse(sqlRedo2);
@@ -231,9 +271,17 @@ public class OracleSourceConnectorUtils{
         ExpressionList eList = (ExpressionList) insert.getItemsList();
         List<Expression> valueList = eList.getExpressions();
         int i =0;
+
+        if (dataMap.size() != tabColsMapType.get(owner+DOT+tableName).size()){
+            ddlState.setChanged(true);
+        }
+
         for (String key : dataMap.keySet()){
           String value = cleanString(valueList.get(i).toString());
-          dataMap.put(key, value);          
+          dataMap.put(key, value);
+          if (!tabColsMap.containsKey(owner+DOT+tableName+DOT+key)){
+              ddlState.setChanged(true);
+          }
           i++;
         }  
   
@@ -281,7 +329,7 @@ public class OracleSourceConnectorUtils{
     }
 
 
-    protected DataSchemaStruct createDataSchema(String owner,String tableName,String sqlRedo,String operation) throws Exception{
+    protected DataSchemaStruct createDataSchema(Data row, String owner, String tableName, String sqlRedo, String operation) throws Exception{
 
       Schema dataSchema=EMPTY_SCHEMA;
       Struct dataStruct = null;
@@ -290,6 +338,7 @@ public class OracleSourceConnectorUtils{
       String preSchemaName = (config.getDbNameAlias()+DOT+owner+DOT+tableName+DOT+"row").toLowerCase();      
       
       if (config.getParseDmlData()){
+
         if (!tableSchema.containsKey(owner+DOT+tableName)){        
           if (!tableName.matches("^[\\w.-]+$")){
             throw new ConnectException("Invalid table name "+tableName+" for kafka topic.Check table name which must consist only a-z, A-Z, '0-9', ., - and _");
@@ -297,7 +346,31 @@ public class OracleSourceConnectorUtils{
           loadTable(owner, tableName,operation);
         }
 
-        Map<String,LinkedHashMap<String,String>> allDataMap = parseSql(owner, tableName, sqlRedo);
+        log.info("thisisbyzs : owner={},tableName={},sqlRedo={}", owner, tableName, sqlRedo);
+        DdlState ddlState = new DdlState();
+        Map<String,LinkedHashMap<String,String>> allDataMap = parseSql(owner, tableName, sqlRedo, ddlState);
+        if (ddlState.isChanged()){
+            log.info("thisisbyzs : check the ddlState is changed");
+            loadTable(owner, tableName,operation);
+            String newSqlRedo = parseSqlWithHEXTORAW(operation, sqlRedo, owner, tableName);
+            row.setSqlRedo(newSqlRedo);
+        }
+
+        // 输出map的信息
+        for (String key :
+              allDataMap.keySet()) {
+          LinkedHashMap map = allDataMap.get(key);
+          Set<String> keySet = map.keySet();
+          log.info("thisisbyzs : key="+key + ",map=>");
+          for (String onekey :
+                  keySet) {
+              log.info("thisisbyzs : onekey="+onekey + ",onevalue="+map.get(onekey));
+          }
+        }
+        for (String col : tabColsMap.keySet()){
+            com.ecer.kafka.connect.oracle.models.Column column = tabColsMap.get(col);
+            log.info("thisisbyzs : tabColsMap : colkey="+col + ",column_value="+column);
+        }
 
         LinkedHashMap<String,String> dataMap = allDataMap.get(DATA_ROW_FIELD);
         LinkedHashMap<String,String> beforeDataMap = allDataMap.get(BEFORE_DATA_ROW_FIELD);
@@ -306,23 +379,29 @@ public class OracleSourceConnectorUtils{
         dataStruct = new Struct(dataSchema);
         beforeDataStruct = new Struct(dataSchema);
         
-        for (String col : beforeDataMap.keySet()){
-          String value = beforeDataMap.get(col);
-          String keyTabCol=owner+"."+tableName+"."+col;
-          beforeDataStruct.put(col, value.equals(NULL_FIELD) ? null:reSetValue(value, tabColsMap.get(keyTabCol).getColumnSchema()));
-          if (operation.equals(OPERATION_UPDATE)){
-            if (dataMap.containsKey(col)){
-              value = dataMap.get(col);               
-            }
-            dataStruct.put(col, value.equals(NULL_FIELD) ? null:reSetValue(value, tabColsMap.get(keyTabCol).getColumnSchema()));
-          }
-        }
+//        for (String col : beforeDataMap.keySet()){
+//          String value = beforeDataMap.get(col);
+//          String keyTabCol=owner+"."+tableName+"."+col;
+//          beforeDataStruct.put(col, value.equals(NULL_FIELD) ? null:reSetValue(value, tabColsMap.get(keyTabCol).getColumnSchema()));
+//          if (operation.equals(OPERATION_UPDATE)){
+//            if (dataMap.containsKey(col)){
+//              value = dataMap.get(col);
+//            }
+//            dataStruct.put(col, value.equals(NULL_FIELD) ? null:reSetValue(value, tabColsMap.get(keyTabCol).getColumnSchema()));
+//          }
+//        }
 
         if (operation.equals(OPERATION_INSERT)){
           for (String col : dataMap.keySet()){
             String value = dataMap.get(col);
-            String keyTabCol=owner+"."+tableName+"."+col;            
-            dataStruct.put(col, value.equals(NULL_FIELD) ? null:reSetValue(value, tabColsMap.get(keyTabCol).getColumnSchema()));
+            String keyTabCol=owner+"."+tableName+"."+col;
+
+            log.info("thisisbyzs : keyTabCol=" + keyTabCol +",dataMapValue="+value+", tabColsMap.get(keyTabCol)="+tabColsMap.get(keyTabCol));
+
+            dataStruct.put(col,
+                    (value == null || value.equals(NULL_FIELD)) ?
+                    null
+                    : reSetValue(value, tabColsMap.get(keyTabCol).getColumnSchema()));
           }          
         }     
 
@@ -348,7 +427,107 @@ public class OracleSourceConnectorUtils{
 
       return new DataSchemaStruct(newSchema, dataStruct, beforeDataStruct);
       
-    }        
+    }
+
+
+    private String parseSqlWithHEXTORAW(String operation, String sqlRedo, String owner,
+                                        String tableName) throws SQLException {
+        // insert into "TEST"."T_TEST_TEST"("COL 1","COL 2","COL 3","COL 4","COL 5","COL 6")
+        // values (HEXTORAW('c121'),HEXTORAW('e5bca0e4b889'),NULL,NULL,HEXTORAW('c122'),HEXTORAW('c123'))
+
+        ArrayList<String> types = tabColsMapType.get(owner + DOT + tableName);
+        StringBuffer newRedoSql = null;
+        switch (operation){
+            case OPERATION_INSERT:
+                String[] v = sqlRedo.split("insert[\\s]+into[\\s]+[\"][a-zA-Z0-9_]+[\"][.][\"][a-zA-Z0-9_]+[\"].*values");
+                if (v.length == 2){
+                    String values = v[1];
+                    String rawValue = values.replaceAll("HEXTORAW|[(]|[)]", "");
+                    String[] rawValues = rawValue.split(",");
+
+//                    new StringBuffer("insert into "+owner+DOT+tableName+" values (");
+//                    UTL_RAW.CAST_TO_VARCHAR2('E5BCA0E4B889')
+
+                    StringBuffer querySql = null;
+                    if (types.size() == rawValues.length) {
+                        querySql = new StringBuffer("select ");
+
+                        for (int i = 0; i < rawValues.length; i++) {
+                            if (rawValues[i].equals("NULL")){
+                                querySql.append(" NULL AS COL" + i + ",");
+                            } else {
+                                switch (types.get(i)) {
+                                    case NUMBER_TYPE:
+                                        querySql.append(" UTL_RAW.cast_to_number(" + rawValues[i] + ") AS COL" + i + ",");
+                                        break;
+                                    case "CHAR":
+                                    case "VARCHAR":
+                                    case "VARCHAR2":
+                                        querySql.append(" UTL_RAW.cast_to_varchar2(" + rawValues[i] + ") AS COL" + i + ",");
+                                        break;
+                                    case "NCHAR":
+                                    case "NVARCHAR":
+                                    case "NVARCHAR2":
+                                        querySql.append(" UTL_RAW.cast_to_nvarchar2(" + rawValues[i] + ") AS COL" + i + ",");
+                                        break;
+
+                                    // 需要捕获
+                                    case "LONG":
+                                    case "CLOB":
+                                    case DATE_TYPE:
+                                    case TIMESTAMP_TYPE:
+                                        break;
+                                    default:
+                                        break;
+                                }
+                            }
+                        }
+
+                        // 去掉最后的逗号
+                        querySql.deleteCharAt(querySql.length() - 1);
+                        querySql.append(" from dual");
+                    }
+                    log.info("thisisbyzs:querySql="+querySql);
+
+                    hexToRawTableCols=dbConn.prepareCall(querySql.toString());
+                    hexToRawTableColsResultSet=mineTableCols.executeQuery();
+
+                    newRedoSql = new StringBuffer("insert into \""+owner+"\""+DOT+"\""+tableName+"\" values (");
+                    int index = 0;
+                    Iterator<String> iterator = types.iterator();
+                    while(hexToRawTableColsResultSet.next() && iterator.hasNext()){
+
+                        switch (iterator.next()) {
+                            case NUMBER_TYPE:
+                                newRedoSql.append(hexToRawTableColsResultSet.getInt(index) + ",");
+                                break;
+                            case "CHAR":
+                            case "VARCHAR":
+                            case "VARCHAR2":
+                            case "NCHAR":
+                            case "NVARCHAR":
+                            case "NVARCHAR2":
+                                newRedoSql.append("'" + hexToRawTableColsResultSet.getString(index) + "',");
+                                break;
+                            // 需要捕获
+                            case "LONG":
+                            case "CLOB":
+                            case DATE_TYPE:
+                            case TIMESTAMP_TYPE:
+                                break;
+                            default:
+                                break;
+                        }
+                        index++;
+                    }
+                    // 去除最后一个逗号
+                    newRedoSql.deleteCharAt(newRedoSql.length() -1);
+                    newRedoSql.append(")");
+                }
+        }
+
+        return newRedoSql.toString();
+    }
 
     private Object reSetValue(String value,Schema colSchema){
       

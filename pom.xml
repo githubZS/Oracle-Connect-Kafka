@@ -10,22 +10,53 @@
     <name>kafka-connect-oracle</name>
 
     <properties>
-        <kafka.version>0.10.2.0-cp1</kafka.version>
+        <kafka.version>0.10.2.0</kafka.version>
         <junit.version>4.12</junit.version>
     </properties>
 
     <dependencies>
         <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>1.7.20</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+            <version>${kafka.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-api</artifactId>
+                </exclusion>
+            </exclusions>
+            <!--<scope>provided</scope>-->
+        </dependency>
+
+
+        <dependency>
+            <groupId>commons-codec</groupId>
+            <artifactId>commons-codec</artifactId>
+            <version>1.6</version>
+        </dependency>
+
+        <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-api</artifactId>
             <version>${kafka.version}</version>
-            <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-log4j12</artifactId>
+                </exclusion>
+            </exclusions>
+            <!--<scope>provided</scope>-->
         </dependency>
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <version>${junit.version}</version>
-            <scope>test</scope>
+            <!--<scope>test</scope>-->
         </dependency>
         <dependency>
             <groupId>com.github.jsqlparser</groupId>
@@ -51,7 +82,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>2.5.1</version>
+                <!--<version>2.5.1</version>-->
                 <inherited>true</inherited>
                 <configuration>
                     <source>1.7</source>
@@ -60,7 +91,7 @@
             </plugin>
             <plugin>
                 <artifactId>maven-assembly-plugin</artifactId>
-                <version>2.5.3</version>
+                <version>2.2.1</version>
                 <configuration>
                     <descriptors>
                         <descriptor>src/main/assembly/package.xml</descriptor>

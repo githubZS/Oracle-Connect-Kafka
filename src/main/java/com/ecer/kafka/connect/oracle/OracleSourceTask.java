@@ -111,8 +111,16 @@ public class OracleSourceTask extends SourceTask {
 
       log.info("Starting LogMiner Session");
       logMinerStartScr=logMinerStartScr+logMinerOptions+") \n; end;";
+
+      log.info("thisisbyzs : logMinerStartScr="+logMinerStartScr);
       logMinerStartStmt=dbConn.prepareCall(logMinerStartScr);
       Map<String,Object> offset = context.offsetStorageReader().offset(Collections.singletonMap(LOG_MINER_OFFSET_FIELD, dbName));
+      for(String key: offset.keySet()){
+        Object value = offset.get(key);
+        log.info("thisisbyzs:context.offset:key="+key +",value="+value);
+      }
+
+
       streamOffsetScn=0L;
       streamOffsetCommitScn=0L;
       streamOffsetRowId="";
@@ -170,10 +178,17 @@ public class OracleSourceTask extends SourceTask {
       //streamOffsetScn+=1;
       log.info("Commit SCN : "+streamOffsetCommitScn);
       log.info(String.format("Log Miner will start at new position SCN : %s with fetch size : %s", streamOffsetScn,config.getDbFetchSize()));
+
+      log.info("thisisbyzs : streamOffsetScn="+streamOffsetScn);
       logMinerStartStmt.setLong(1, streamOffsetScn);
-      logMinerStartStmt.execute();      
+      logMinerStartStmt.execute();
+
+      log.info("thisisbyzs : logMinerSelectSql=" + logMinerSelectSql);
       logMinerSelect=dbConn.prepareCall(logMinerSelectSql);
       logMinerSelect.setFetchSize(config.getDbFetchSize());
+
+      streamOffsetCommitScn = streamOffsetScn;
+      log.info("thisisbyzs : streamOffsetCommitScn=" + streamOffsetCommitScn);
       logMinerSelect.setLong(1, streamOffsetCommitScn);
       logMinerData=logMinerSelect.executeQuery();
       log.info("Logminer started successfully");
@@ -189,7 +204,7 @@ public class OracleSourceTask extends SourceTask {
     try {
       ArrayList<SourceRecord> records = new ArrayList<>();
       while(!this.closed && logMinerData.next()){
-    	  if (log.isDebugEnabled()) {
+    	  if (log.isInfoEnabled()) {
     		  logRawMinerData();
     	  }
         Long scn=logMinerData.getLong(SCN_FIELD);
@@ -212,13 +227,19 @@ public class OracleSourceTask extends SourceTask {
         String segOwner = logMinerData.getString(SEG_OWNER_FIELD); 
         String segName = logMinerData.getString(TABLE_NAME_FIELD);
         String sqlRedo = logMinerData.getString(SQL_REDO_FIELD);
-        if (sqlRedo.contains(TEMPORARY_TABLE)) continue;
 
+        log.info("thisisbyzs : logMinerData.class="+logMinerData.getClass().getName());
+        log.info("thisisbyzs : poll->sqlRedo="+sqlRedo);
+
+        if (sqlRedo.contains(TEMPORARY_TABLE)) continue;
         while(contSF){
           logMinerData.next();
           sqlRedo +=  logMinerData.getString(SQL_REDO_FIELD);
           contSF = logMinerData.getBoolean(CSF_FIELD);
-        } 
+        }
+
+        log.info("thisisbyzs : poll->sqlRedo="+sqlRedo);
+
         sqlX=sqlRedo;        
         Timestamp timeStamp=logMinerData.getTimestamp(TIMESTAMP_FIELD);
         String operation = logMinerData.getString(OPERATION_FIELD);
@@ -226,8 +247,9 @@ public class OracleSourceTask extends SourceTask {
         topic = config.getTopic().equals("") ? (config.getDbNameAlias()+DOT+row.getSegOwner()+DOT+row.getSegName()).toUpperCase() : topic;
         //log.info(String.format("Fetched %s rows from database %s ",ix,config.getDbNameAlias())+" "+row.getTimeStamp()+" "+row.getSegName()+" "+row.getScn()+" "+commitScn);
         if (ix % 100 == 0) log.info(String.format("Fetched %s rows from database %s ",ix,config.getDbNameAlias())+" "+row.getTimeStamp());
-        dataSchemaStruct = utils.createDataSchema(segOwner, segName, sqlRedo,operation);
-        records.add(new SourceRecord(sourcePartition(), sourceOffset(scn,commitScn,rowId), topic,  dataSchemaStruct.getDmlRowSchema(), setValueV2(row,dataSchemaStruct)));                          
+        dataSchemaStruct = utils.createDataSchema(row, segOwner, segName, sqlRedo,operation);
+        records.add(new SourceRecord(sourcePartition(), sourceOffset(scn,commitScn,rowId),
+                topic,  dataSchemaStruct.getDmlRowSchema(), setValueV2(row,dataSchemaStruct)));
         streamOffsetScn=scn;
         return records;
       }
@@ -255,7 +277,7 @@ public class OracleSourceTask extends SourceTask {
       if (dbConn!=null){
         log.info("Closing database connection.Last SCN : {}",streamOffsetScn);        
         logMinerSelect.close();
-        logMinerStartStmt.close();        
+        logMinerStartStmt.close();
         dbConn.close();
       }
     } catch (SQLException e) {}
@@ -290,14 +312,14 @@ public class OracleSourceTask extends SourceTask {
   }
 
   private void logRawMinerData() throws SQLException {
-	  if (log.isDebugEnabled()) {
+	  if (log.isInfoEnabled()) {
 		  StringBuffer b = new StringBuffer();
 		  for (int i = 1; i < logMinerData.getMetaData().getColumnCount(); i++) {
 			  String columnName = logMinerData.getMetaData().getColumnName(i);
 			  Object columnValue = logMinerData.getObject(i);
 			  b.append("[" + columnName + "=" + (columnValue == null ? "NULL" : columnValue.toString()) + "]");
 		  }
-		  log.debug(b.toString());
+		  log.info(b.toString());
 	  }
   }
 }
