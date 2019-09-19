@@ -91,7 +91,7 @@ public class OracleSourceConnectorUtils{
         parseTableWhiteList();
     }
 
-    protected String getLogMinerSelectSql(){
+    public String getLogMinerSelectSql(){
         return this.logMinerSelectSql;
     }
 

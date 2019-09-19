@@ -212,7 +212,10 @@ public class OracleSourceTask extends SourceTask {
         String rowId=logMinerData.getString(ROW_ID_FIELD);
         boolean contSF = logMinerData.getBoolean(CSF_FIELD);
         if (skipRecord){
-          if ((scn.equals(streamOffsetCtrl))&&(commitScn.equals(streamOffsetCommitScn))&&(rowId.equals(streamOffsetRowId))&&(!contSF)){
+          if ((scn.equals(streamOffsetCtrl))
+                  &&(commitScn.equals(streamOffsetCommitScn))
+                  &&(rowId.equals(streamOffsetRowId))
+                  &&(!contSF)){
             skipRecord=false;
           }
           log.info("Skipping data with scn :{} Commit Scn :{} Rowid :{}",scn,commitScn,rowId);

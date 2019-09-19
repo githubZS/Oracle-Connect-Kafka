@@ -56,7 +56,8 @@ public class OracleSourceConnectorConfig extends AbstractConfig {
   public int getDbPort(){return this.getInt(DB_PORT_CONFIG);}
   public String getDbUser(){return this.getString(DB_USER_CONFIG);}
   public String getDbUserPassword(){return this.getString(DB_USER_PASSWORD_CONFIG);}
-  public String getTableWhiteList(){return this.getString(TABLE_WHITELIST);}
+  // 配置文件中配置白名单时，支持表名称大小写
+  public String getTableWhiteList(){return this.getString(TABLE_WHITELIST).toUpperCase();}
   public Boolean getParseDmlData(){return this.getBoolean(PARSE_DML_DATA);}
   public int getDbFetchSize(){return this.getInt(DB_FETCH_SIZE);}
   public Boolean getResetOffset(){return this.getBoolean(RESET_OFFSET);}
