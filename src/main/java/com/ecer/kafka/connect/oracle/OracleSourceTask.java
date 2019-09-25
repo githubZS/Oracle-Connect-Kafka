@@ -198,11 +198,13 @@ public class OracleSourceTask extends SourceTask {
   }
 
   @Override
-  public List<SourceRecord> poll() throws InterruptedException {
+  public List<SourceRecord> poll() {
     //TODO: Create SourceRecord objects that will be sent the kafka cluster.
     String sqlX="";
     try {
       ArrayList<SourceRecord> records = new ArrayList<>();
+
+      long t = System.currentTimeMillis();
       while(!this.closed && logMinerData.next()){
     	  if (log.isInfoEnabled()) {
     		  logRawMinerData();
@@ -253,11 +255,20 @@ public class OracleSourceTask extends SourceTask {
         Data row = new Data(scn, segOwner, segName, sqlRedo,timeStamp,operation);
         topic = config.getTopic().equals("") ? (config.getDbNameAlias()+DOT+row.getSegOwner()+DOT+row.getSegName()).toUpperCase() : topic;
         //log.info(String.format("Fetched %s rows from database %s ",ix,config.getDbNameAlias())+" "+row.getTimeStamp()+" "+row.getSegName()+" "+row.getScn()+" "+commitScn);
-        if (ix % 100 == 0) {
+        if (ix % 50 == 0) {
             log.info(
                     String.format("Fetched %s rows from database %s ",
                             ix, config.getDbNameAlias()) + " " + row.getTimeStamp());
 
+            // 如果一秒内有超过50条数据过来，暂时休眠500毫秒
+            if (System.currentTimeMillis() - t < 1000) {
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            t = System.currentTimeMillis();
         }
         dataSchemaStruct = utils.createDataSchema(row, segOwner, segName, sqlRedo,operation);
         records.add(new SourceRecord(sourcePartition(), sourceOffset(scn,commitScn,rowId),
@@ -267,9 +278,11 @@ public class OracleSourceTask extends SourceTask {
       }
 
       log.info("Logminer stoppped successfully");
-    } catch (SQLException e){
+    }
+    catch (SQLException e){
       log.error("SQL error during poll",e );
-    }catch(JSQLParserException e){
+    }
+    catch(JSQLParserException e){
       log.error("SQL parser error during poll ", e);
     }
     catch(Exception e){
