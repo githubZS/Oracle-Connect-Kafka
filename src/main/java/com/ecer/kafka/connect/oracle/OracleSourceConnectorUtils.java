@@ -421,8 +421,9 @@ public class OracleSourceConnectorUtils{
                   .field(TIMESTAMP_FIELD,org.apache.kafka.connect.data.Timestamp.SCHEMA)
                   .field(SQL_REDO_FIELD, Schema.STRING_SCHEMA)
                   .field(OPERATION_FIELD, Schema.STRING_SCHEMA)
-                  .field(DATA_ROW_FIELD, dataSchema)
-                  .field(BEFORE_DATA_ROW_FIELD,dataSchema)
+//                  .field(DATA_ROW_FIELD, dataSchema)
+              // 目前不关心before结构， 注释掉
+//                  .field(BEFORE_DATA_ROW_FIELD,dataSchema)
                   .build();
 
       return new DataSchemaStruct(newSchema, dataStruct, beforeDataStruct);

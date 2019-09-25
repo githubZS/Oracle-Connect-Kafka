@@ -45,21 +45,21 @@ import com.ecer.kafka.connect.oracle.models.DataSchemaStruct;
 import net.sf.jsqlparser.JSQLParserException;
 
 /**
- *  
+ *
  * @author Erdem Cer (erdemcer@gmail.com)
  */
 
 public class OracleSourceTask extends SourceTask {
   static final Logger log = LoggerFactory.getLogger(OracleSourceTask.class);
-  private String dbName;  
+  private String dbName;
   private Long streamOffsetScn;
   private Long streamOffsetCommitScn;
-  private String streamOffsetRowId;  
+  private String streamOffsetRowId;
   private Long streamOffsetCtrl;
-  private String topic=null;  
+  private String topic=null;
   public OracleSourceConnectorConfig config;
   private OracleSourceConnectorUtils utils;
-  private static Connection dbConn;  
+  private static Connection dbConn;
   String logMinerOptions=OracleConnectorSQL.LOGMINER_START_OPTIONS;
   String logMinerStartScr=OracleConnectorSQL.START_LOGMINER_CMD;
   CallableStatement logMinerStartStmt=null;
@@ -68,18 +68,18 @@ public class OracleSourceTask extends SourceTask {
   static PreparedStatement logMinerSelect;
   PreparedStatement currentSCNStmt;
   ResultSet logMinerData;
-  ResultSet currentScnResultSet;  
+  ResultSet currentScnResultSet;
   private boolean closed=false;
   Boolean parseDmlData;
   static int ix=0;
   boolean skipRecord=true;
   private DataSchemaStruct dataSchemaStruct;
   private ConnectorSQL sql;
-  
+
   public OracleSourceTask() throws IOException {
 	  this.sql = new ConnectorSQL();
   }
-  
+
   @Override
   public String version() {
     return VersionUtil.getVersion();
@@ -97,7 +97,7 @@ public class OracleSourceTask extends SourceTask {
   @Override
   public void start(Map<String, String> map) {
     //TODO: Do things here that are required to start your task. This could be open a connection to a database, etc.
-    config=new OracleSourceConnectorConfig(map);    
+    config=new OracleSourceConnectorConfig(map);
     topic=config.getTopic();
     dbName=config.getDbNameAlias();
     parseDmlData=config.getParseDmlData();
@@ -107,7 +107,7 @@ public class OracleSourceTask extends SourceTask {
       log.info("Connecting to database");
       dbConn = new OracleConnection().connect(config);
       utils = new OracleSourceConnectorUtils(dbConn, config, sql);
-      logMinerSelectSql = utils.getLogMinerSelectSql();      
+      logMinerSelectSql = utils.getLogMinerSelectSql();
 
       log.info("Starting LogMiner Session");
       logMinerStartScr=logMinerStartScr+logMinerOptions+") \n; end;";
@@ -127,41 +127,41 @@ public class OracleSourceTask extends SourceTask {
       if (offset!=null){
         Object lastRecordedOffset = offset.get(POSITION_FIELD);
         Object commitScnPositionObject = offset.get(COMMITSCN_POSITION_FIELD);
-        Object rowIdPositionObject = offset.get(ROWID_POSITION_FIELD);        
+        Object rowIdPositionObject = offset.get(ROWID_POSITION_FIELD);
         streamOffsetScn = (lastRecordedOffset != null) ? Long.parseLong(String.valueOf(lastRecordedOffset)) : 0L;
         streamOffsetCommitScn = (commitScnPositionObject != null) ? Long.parseLong(String.valueOf(commitScnPositionObject)) : 0L;
         streamOffsetRowId = (rowIdPositionObject != null) ? (String) offset.get(ROWID_POSITION_FIELD) : "";
-      }      
+      }
 
       if (streamOffsetScn!=0L){
         streamOffsetCtrl=streamOffsetScn;
         PreparedStatement lastScnFirstPosPs=dbConn.prepareCall(OracleConnectorSQL.LASTSCN_STARTPOS);
         lastScnFirstPosPs.setLong(1, streamOffsetScn);
-        lastScnFirstPosPs.setLong(2, streamOffsetScn);        
+        lastScnFirstPosPs.setLong(2, streamOffsetScn);
         ResultSet lastScnFirstPosRSet=lastScnFirstPosPs.executeQuery();
         while(lastScnFirstPosRSet.next()){
           streamOffsetScn= lastScnFirstPosRSet.getLong("FIRST_CHANGE#");
         }
         lastScnFirstPosRSet.close();
         lastScnFirstPosPs.close();
-        
+
         //streamOffsetScn=lastScnFirstPos-1;
         //streamOffsetScn=lastScnFirstPos;
         log.info("Captured last SCN has first position:{}",streamOffsetScn);
       }
-      
+
       if (!startSCN.equals("")){
         log.info("Resetting offset with specified start SCN:{}",startSCN);
         streamOffsetScn=Long.parseLong(startSCN);
         //streamOffsetScn-=1;
         skipRecord=false;
       }
-      
+
       if (config.getResetOffset()){
         log.info("Resetting offset with new SCN");
         streamOffsetScn=0L;
         streamOffsetCommitScn=0L;
-        streamOffsetRowId="";        
+        streamOffsetRowId="";
       }
 
       if (streamOffsetScn==0L){
@@ -172,7 +172,7 @@ public class OracleSourceTask extends SourceTask {
           streamOffsetScn=currentScnResultSet.getLong("CURRENT_SCN");
         }
         currentScnResultSet.close();
-        currentSCNStmt.close();        
+        currentSCNStmt.close();
         log.info("Getting current scn from database {}",streamOffsetScn);
       }
       //streamOffsetScn+=1;
@@ -195,11 +195,11 @@ public class OracleSourceTask extends SourceTask {
     }catch(SQLException e){
       throw new ConnectException("Error at database tier, Please check : "+e.toString());
     }
-  }    
+  }
 
   @Override
   public List<SourceRecord> poll() throws InterruptedException {
-    //TODO: Create SourceRecord objects that will be sent the kafka cluster. 
+    //TODO: Create SourceRecord objects that will be sent the kafka cluster.
     String sqlX="";
     try {
       ArrayList<SourceRecord> records = new ArrayList<>();
@@ -223,11 +223,15 @@ public class OracleSourceTask extends SourceTask {
         }
         //log.info("Data :"+scn+" Commit Scn :"+commitScn);
 
+         if (ix == Integer.MAX_VALUE  - 1){
+             log.info("the ix will reach the Integer.MAX_VALUE, ix={}, ix will start at 1.", ix);
+            ix = 0;
+         }
         ix++;
-     
+
         //String containerId = logMinerData.getString(SRC_CON_ID_FIELD);
         //log.info("logminer event from container {}", containerId);
-        String segOwner = logMinerData.getString(SEG_OWNER_FIELD); 
+        String segOwner = logMinerData.getString(SEG_OWNER_FIELD);
         String segName = logMinerData.getString(TABLE_NAME_FIELD);
         String sqlRedo = logMinerData.getString(SQL_REDO_FIELD);
 
@@ -243,21 +247,26 @@ public class OracleSourceTask extends SourceTask {
 
         log.info("thisisbyzs : poll->sqlRedo="+sqlRedo);
 
-        sqlX=sqlRedo;        
+        sqlX=sqlRedo;
         Timestamp timeStamp=logMinerData.getTimestamp(TIMESTAMP_FIELD);
         String operation = logMinerData.getString(OPERATION_FIELD);
         Data row = new Data(scn, segOwner, segName, sqlRedo,timeStamp,operation);
         topic = config.getTopic().equals("") ? (config.getDbNameAlias()+DOT+row.getSegOwner()+DOT+row.getSegName()).toUpperCase() : topic;
         //log.info(String.format("Fetched %s rows from database %s ",ix,config.getDbNameAlias())+" "+row.getTimeStamp()+" "+row.getSegName()+" "+row.getScn()+" "+commitScn);
-        if (ix % 100 == 0) log.info(String.format("Fetched %s rows from database %s ",ix,config.getDbNameAlias())+" "+row.getTimeStamp());
+        if (ix % 100 == 0) {
+            log.info(
+                    String.format("Fetched %s rows from database %s ",
+                            ix, config.getDbNameAlias()) + " " + row.getTimeStamp());
+
+        }
         dataSchemaStruct = utils.createDataSchema(row, segOwner, segName, sqlRedo,operation);
         records.add(new SourceRecord(sourcePartition(), sourceOffset(scn,commitScn,rowId),
                 topic,  dataSchemaStruct.getDmlRowSchema(), setValueV2(row,dataSchemaStruct)));
         streamOffsetScn=scn;
         return records;
       }
-      
-      log.info("Logminer stoppped successfully");       
+
+      log.info("Logminer stoppped successfully");
     } catch (SQLException e){
       log.error("SQL error during poll",e );
     }catch(JSQLParserException e){
@@ -267,18 +276,18 @@ public class OracleSourceTask extends SourceTask {
       log.error("Error during poll on topic {} SQL :{}", topic, sqlX, e);
     }
     return null;
-    
+
   }
 
   @Override
   public void stop() {
     log.info("Stop called for logminer");
     this.closed=true;
-    try {            
+    try {
       log.info("Logminer session cancel");
       logMinerSelect.cancel();
       if (dbConn!=null){
-        log.info("Closing database connection.Last SCN : {}",streamOffsetScn);        
+        log.info("Closing database connection.Last SCN : {}",streamOffsetScn);
         logMinerSelect.close();
         logMinerStartStmt.close();
         dbConn.close();
@@ -287,7 +296,7 @@ public class OracleSourceTask extends SourceTask {
 
   }
 
-  private Struct setValueV2(Data row,DataSchemaStruct dataSchemaStruct) {    
+  private Struct setValueV2(Data row,DataSchemaStruct dataSchemaStruct) {
     Struct valueStruct = new Struct(dataSchemaStruct.getDmlRowSchema())
               .put(SCN_FIELD, row.getScn())
               .put(SEG_OWNER_FIELD, row.getSegOwner())
@@ -295,11 +304,12 @@ public class OracleSourceTask extends SourceTask {
               .put(TIMESTAMP_FIELD, row.getTimeStamp())
               .put(SQL_REDO_FIELD, row.getSqlRedo())
               .put(OPERATION_FIELD, row.getOperation())
-              .put(DATA_ROW_FIELD, dataSchemaStruct.getDataStruct())
-              .put(BEFORE_DATA_ROW_FIELD, dataSchemaStruct.getBeforeDataStruct());
+//              .put(DATA_ROW_FIELD, dataSchemaStruct.getDataStruct())
+//              .put(BEFORE_DATA_ROW_FIELD, dataSchemaStruct.getBeforeDataStruct())
+            ;
     return valueStruct;
-    
-  }  
+
+  }
 
   private Map<String,String> sourcePartition(){
     return Collections.singletonMap(LOG_MINER_OFFSET_FIELD, dbName);
