@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration debug="false" scan="false" scanPeriod="30 seconds">
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{56} - %msg%n
+            </pattern>
+        </encoder>
+    </appender>
+
+    <!-- 按日期区分的滚动日志 -->
+    <appender name="APP" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/kafka-connect-oracle.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} %level [%thread] [%class:%line] - %m%n</pattern>
+            <charset class="java.nio.charset.Charset">UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/kafka-connect-oracle.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="APP"/>
+    </root>
+</configuration>
