@@ -346,11 +346,10 @@ public class OracleSourceConnectorUtils{
           loadTable(owner, tableName,operation);
         }
 
-        log.info("thisisbyzs : owner={},tableName={},sqlRedo={}", owner, tableName, sqlRedo);
         DdlState ddlState = new DdlState();
         Map<String,LinkedHashMap<String,String>> allDataMap = parseSql(owner, tableName, sqlRedo, ddlState);
         if (ddlState.isChanged()){
-            log.info("thisisbyzs : check the ddlState is changed");
+            log.info("thisisbyzs : check the ddlState is changed, owner={},tableName={}", owner, tableName);
             loadTable(owner, tableName,operation);
             String newSqlRedo = parseSqlWithHEXTORAW(operation, sqlRedo, owner, tableName);
             row.setSqlRedo(newSqlRedo);

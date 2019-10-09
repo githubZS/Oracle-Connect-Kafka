@@ -36,6 +36,7 @@ import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.kafka.connect.source.SourceTask;
+import org.apache.kafka.connect.storage.OffsetStorageReader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,6 +68,7 @@ public class OracleSourceTask extends SourceTask {
   String logMinerSelectSql;
   static PreparedStatement logMinerSelect;
   PreparedStatement currentSCNStmt;
+  // ojdbc7.jar: oracle.jdbc.driver.ForwardOnlyResultSet
   ResultSet logMinerData;
   ResultSet currentScnResultSet;
   private boolean closed=false;
@@ -114,17 +116,24 @@ public class OracleSourceTask extends SourceTask {
 
       log.info("thisisbyzs : logMinerStartScr="+logMinerStartScr);
       logMinerStartStmt=dbConn.prepareCall(logMinerStartScr);
-      Map<String,Object> offset = context.offsetStorageReader().offset(Collections.singletonMap(LOG_MINER_OFFSET_FIELD, dbName));
-      for(String key: offset.keySet()){
-        Object value = offset.get(key);
-        log.info("thisisbyzs:context.offset:key="+key +",value="+value);
-      }
+
+      OffsetStorageReader offsetStorageReader = context.offsetStorageReader();
+      log.info("thisisbyzs:dbName="+dbName +",offsetStorageReader="+offsetStorageReader);
+      Map<String,Object> offset = offsetStorageReader
+              .offset(Collections.singletonMap(LOG_MINER_OFFSET_FIELD, dbName));
+
 
 
       streamOffsetScn=0L;
       streamOffsetCommitScn=0L;
       streamOffsetRowId="";
       if (offset!=null){
+
+        for(String key: offset.keySet()){
+          Object value = offset.get(key);
+          log.info("thisisbyzs:context.offset:key="+key +",value="+value);
+        }
+
         Object lastRecordedOffset = offset.get(POSITION_FIELD);
         Object commitScnPositionObject = offset.get(COMMITSCN_POSITION_FIELD);
         Object rowIdPositionObject = offset.get(ROWID_POSITION_FIELD);
@@ -213,6 +222,8 @@ public class OracleSourceTask extends SourceTask {
         Long commitScn=logMinerData.getLong(COMMIT_SCN_FIELD);
         String rowId=logMinerData.getString(ROW_ID_FIELD);
         boolean contSF = logMinerData.getBoolean(CSF_FIELD);
+
+        // 作用场景？？？
         if (skipRecord){
           if ((scn.equals(streamOffsetCtrl))
                   &&(commitScn.equals(streamOffsetCommitScn))
@@ -223,31 +234,23 @@ public class OracleSourceTask extends SourceTask {
           log.info("Skipping data with scn :{} Commit Scn :{} Rowid :{}",scn,commitScn,rowId);
           continue;
         }
-        //log.info("Data :"+scn+" Commit Scn :"+commitScn);
 
-         if (ix == Integer.MAX_VALUE  - 1){
-             log.info("the ix will reach the Integer.MAX_VALUE, ix={}, ix will start at 1.", ix);
-            ix = 0;
-         }
-        ix++;
 
-        //String containerId = logMinerData.getString(SRC_CON_ID_FIELD);
-        //log.info("logminer event from container {}", containerId);
+
         String segOwner = logMinerData.getString(SEG_OWNER_FIELD);
         String segName = logMinerData.getString(TABLE_NAME_FIELD);
         String sqlRedo = logMinerData.getString(SQL_REDO_FIELD);
 
-        log.info("thisisbyzs : logMinerData.class="+logMinerData.getClass().getName());
-        log.info("thisisbyzs : poll->sqlRedo="+sqlRedo);
+        if (sqlRedo.contains(TEMPORARY_TABLE)) {
+          continue;
+        }
 
-        if (sqlRedo.contains(TEMPORARY_TABLE)) continue;
+        // 作用场景？？？
         while(contSF){
           logMinerData.next();
           sqlRedo +=  logMinerData.getString(SQL_REDO_FIELD);
           contSF = logMinerData.getBoolean(CSF_FIELD);
         }
-
-        log.info("thisisbyzs : poll->sqlRedo="+sqlRedo);
 
         sqlX=sqlRedo;
         Timestamp timeStamp=logMinerData.getTimestamp(TIMESTAMP_FIELD);
@@ -255,6 +258,13 @@ public class OracleSourceTask extends SourceTask {
         Data row = new Data(scn, segOwner, segName, sqlRedo,timeStamp,operation);
         topic = config.getTopic().equals("") ? (config.getDbNameAlias()+DOT+row.getSegOwner()+DOT+row.getSegName()).toUpperCase() : topic;
         //log.info(String.format("Fetched %s rows from database %s ",ix,config.getDbNameAlias())+" "+row.getTimeStamp()+" "+row.getSegName()+" "+row.getScn()+" "+commitScn);
+
+        // 记录
+        if (ix == Integer.MAX_VALUE ){
+          log.info("the ix will reach the Integer.MAX_VALUE, ix={}, ix will start at 1.", ix);
+          ix = 0;
+        }
+        ix++;
         if (ix % 50 == 0) {
             log.info(
                     String.format("Fetched %s rows from database %s ",
@@ -263,6 +273,7 @@ public class OracleSourceTask extends SourceTask {
             // 如果一秒内有超过50条数据过来，暂时休眠500毫秒
             if (System.currentTimeMillis() - t < 1000) {
                 try {
+                    log.info("there are more than 50 rows in 1s, sleep 500ms......");
                     Thread.sleep(500);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
@@ -270,7 +281,8 @@ public class OracleSourceTask extends SourceTask {
             }
             t = System.currentTimeMillis();
         }
-        dataSchemaStruct = utils.createDataSchema(row, segOwner, segName, sqlRedo,operation);
+
+        dataSchemaStruct = utils.createDataSchema(row, segOwner, segName, sqlRedo, operation);
         records.add(new SourceRecord(sourcePartition(), sourceOffset(scn,commitScn,rowId),
                 topic,  dataSchemaStruct.getDmlRowSchema(), setValueV2(row,dataSchemaStruct)));
         streamOffsetScn=scn;
