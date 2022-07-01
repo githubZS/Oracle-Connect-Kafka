@@ -10,7 +10,7 @@
     <name>kafka-connect-oracle</name>
 
     <properties>
-        <kafka.version>0.10.2.0</kafka.version>
+        <kafka.version>0.10.2.1-cp1</kafka.version>
         <junit.version>4.12</junit.version>
         <logback.version>1.1.7</logback.version>
     </properties>
